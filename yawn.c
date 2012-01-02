@@ -16,7 +16,7 @@ typedef struct client {
     Window win;
 } client;
 
-static Display* display;
+Display* display;
 
 // desktop
 int master_size;
@@ -24,25 +24,28 @@ int mode;
 client* head;
 client* current;
 
-static int sh;
-static int sw;
-static int screen;
-static Window root;
-static int bool_quit;
+int sh;
+int sw;
+int screen;
+Window root;
+int bool_quit;
 
-static void die( const char* e );
-static void sigchld( int unused );
-static void setup();
-static void start();
+void die( const char* e );
+void sigchld( int unused );
+void setup();
+void start();
+void add_window( Window w );
+void tile();
+void update();
 
 // XEvent handlers
-static void keypress( XEvent *e );
-static void maprequest( XEvent *e );
-static void destroynotify( XEvent *e );
-static void configurenotify( XEvent *e );
-static void configurerequest( XEvent *e );
+void keypress( XEvent *e );
+void maprequest( XEvent *e );
+void destroynotify( XEvent *e );
+void configurenotify( XEvent *e );
+void configurerequest( XEvent *e );
 
-static void (*events[LASTEvent])(XEvent *e) = {
+void (*events[LASTEvent])(XEvent *e) = {
     [KeyPress] = keypress,
     [MapRequest] = maprequest,
     [DestroyNotify] = destroynotify,
@@ -50,9 +53,8 @@ static void (*events[LASTEvent])(XEvent *e) = {
     [ConfigureRequest] = configurerequest
 };
 
-
 void die( const char* e ) {
-    printf( "yawn: %s\n", e );
+    fprintf( stderr, "yawn: %s\n", e );
     exit( 1 );
 }
 
@@ -64,24 +66,71 @@ void sigchld( int unused ) {
 	while( 0 < waitpid( -1, NULL, WNOHANG ) );
 }
 
-void keypress( XEvent *e ) {
+void keypress( XEvent* e ) {
     printf( "yawn: keypress\n" );
 }
 
-void maprequest( XEvent *e ) {
+void maprequest( XEvent* e ) {
     printf( "yawn: maprequest\n" );
+
+    XMapRequestEvent* ev = &e->xmaprequest;
+    add_window( ev->window );
+    XMapWindow( display, ev->window );
+    tile();
+    update();
 }
 
-void destroynotify( XEvent *e ) {
+void destroynotify( XEvent* e ) {
     printf( "yawn: destroynotify\n" );
 }
 
-void configurenotify( XEvent *e ) {
+void configurenotify( XEvent* e ) {
     printf( "yawn: configurenotify\n" );
 }
 
-void configurerequest( XEvent *e ) {
+void configurerequest( XEvent* e ) {
     printf( "yawn: configurerequest\n" );
+
+    XConfigureRequestEvent *ev = &e->xconfigurerequest;
+    XWindowChanges wc;
+    wc.x = ev->x;
+    wc.y = ev->y;
+    wc.width = ev->width;
+    wc.height = ev->height;
+    wc.border_width = ev->border_width;
+    wc.sibling = ev->above;
+    wc.stack_mode = ev->detail;
+    XConfigureWindow( display, ev->window, ev->value_mask, &wc );
+}
+
+void add_window( Window w ) {
+    client * c;
+
+    if ( !( c = (client*)malloc( 1 * sizeof( client ) ) ) ) {
+        die( "yawn: Malloc error on add_window" );
+    }
+
+    c->next = NULL;
+    c->prev = NULL;
+    c->win = w;
+    head = c;
+
+    current = c;
+}
+
+void tile() {
+    if ( current != NULL ) {
+        printf( "yawn: resizing current\n" );
+        XMoveResizeWindow( display, current->win, 0, 0, sw-2, sh-2 );
+    }
+}
+
+void update() {
+    if ( current != NULL ) {
+        printf( "yawn: raising current\n" );
+        XSetInputFocus( display, current->win, RevertToParent, CurrentTime );
+        XRaiseWindow( display, current->win );
+    }
 }
 
 #define MASTER_SIZE     0.6
