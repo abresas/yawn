@@ -3,9 +3,18 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <X11/XF86keysym.h>
+#include <xcb/xcb.h>
+#include <xcb/xcb_atom.h>
+#include <xcb/xcb_icccm.h>
+#include <xcb/xcb_keysyms.h>
+#include <xcb/xcb_aux.h>
+#include <xcb/xcb_event.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+
+xcb_connection_t * xconn;
+xcb_screen_t * screen;
 
 typedef struct client {
     // Prev and next client
@@ -13,10 +22,8 @@ typedef struct client {
     struct client *prev;
 
     // The window
-    Window win;
+    xcb_window_t win;
 } client;
-
-Display* display;
 
 // desktop
 int master_size;
@@ -24,33 +31,33 @@ int mode;
 client* head;
 client* current;
 
-int sh;
-int sw;
-int screen;
-Window root;
+uint32_t sh;
+uint32_t sw;
+uint8_t default_depth;
+xcb_visualtype_t * visual;
 int bool_quit;
 
 void die( const char* e );
 void sigchld( int unused );
 void setup();
 void start();
-void add_window( Window w );
+void add_window( xcb_window_t w );
 void tile();
 void update();
 
-// XEvent handlers
-void keypress( XEvent *e );
-void maprequest( XEvent *e );
-void destroynotify( XEvent *e );
-void configurenotify( XEvent *e );
-void configurerequest( XEvent *e );
+// xcb_generic_event_t handlers
+void keypress( xcb_generic_event_t *e );
+void maprequest( xcb_generic_event_t *e );
+void destroynotify( xcb_generic_event_t *e );
+void configurenotify( xcb_generic_event_t *e );
+void configurerequest( xcb_generic_event_t *e );
 
-void (*events[LASTEvent])(XEvent *e) = {
-    [KeyPress] = keypress,
-    [MapRequest] = maprequest,
-    [DestroyNotify] = destroynotify,
-    [ConfigureNotify] = configurenotify,
-    [ConfigureRequest] = configurerequest
+void (*events[256])( xcb_generic_event_t * ) = {
+    [XCB_KEY_PRESS] = keypress,
+    [XCB_CONFIGURE_REQUEST] = configurerequest,
+    [XCB_DESTROY_NOTIFY] = destroynotify,
+    [XCB_CONFIGURE_NOTIFY] = configurenotify,
+    [XCB_MAP_REQUEST] = maprequest
 };
 
 void die( const char* e ) {
@@ -66,44 +73,114 @@ void sigchld( int unused ) {
 	while( 0 < waitpid( -1, NULL, WNOHANG ) );
 }
 
-void keypress( XEvent* e ) {
+void keypress( xcb_generic_event_t* e ) {
     printf( "yawn: keypress\n" );
 }
 
-void maprequest( XEvent* e ) {
+#define CLIENT_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE )
+#define FRAME_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW | XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT )
+
+void
+client_manage(xcb_window_t w )
+{
+    xcb_get_geometry_cookie_t geom_c = xcb_get_geometry_unchecked( xconn, w );
+    xcb_get_geometry_reply_t * wgeom = xcb_get_geometry_reply(xconn, geom_c, NULL);
+    const uint32_t select_input_val[] = { CLIENT_SELECT_INPUT_EVENT_MASK };
+
+    /* Make sure the window is automatically mapped if awesome exits or dies. */
+    xcb_change_save_set( xconn, XCB_SET_MODE_INSERT, w);
+
+    uint32_t frameid = xcb_generate_id( xconn );
+    xcb_create_window( xconn, default_depth, frameid, screen->root,
+                      wgeom->x, wgeom->y, wgeom->width, wgeom->height,
+                      wgeom->border_width, XCB_COPY_FROM_PARENT, visual->visual_id,
+                      XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_BIT_GRAVITY
+                      | XCB_CW_WIN_GRAVITY | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK
+                      | XCB_CW_COLORMAP,
+                      (const uint32_t [])
+                      {
+                          screen->black_pixel,
+                          screen->black_pixel,
+                          XCB_GRAVITY_NORTH_WEST,
+                          XCB_GRAVITY_NORTH_WEST,
+                          1,
+                          FRAME_SELECT_INPUT_EVENT_MASK,
+                          screen->default_colormap
+                      });
+
+    xcb_reparent_window( xconn, w, frameid, 0, 0);
+    xcb_map_window( xconn, w);
+    xcb_map_window( xconn, frameid);
+
+    /* Do this now so that we don't get any events for the above
+     * (Else, reparent could cause an UnmapNotify) */
+    xcb_change_window_attributes(xconn, w, XCB_CW_EVENT_MASK, select_input_val);
+
+    /* The frame window gets the border, not the real client window */
+    xcb_configure_window( xconn, w,
+                         XCB_CONFIG_WINDOW_BORDER_WIDTH,
+                         (uint32_t[]) { 0 });
+
+    /* Move this window to the bottom of the stack. Without this we would force
+     * other windows which will be above this one to redraw themselves because
+     * this window occludes them for a tiny moment. The next stack_refresh()
+     * will fix this up and move the window to its correct place. */
+
+    xcb_configure_window(xconn, w,
+                         XCB_CONFIG_WINDOW_STACK_MODE,
+                         (uint32_t[]) { XCB_STACK_MODE_ABOVE });
+}
+
+
+void maprequest( xcb_generic_event_t* e ) {
     printf( "yawn: maprequest\n" );
 
-    XMapRequestEvent* ev = &e->xmaprequest;
+    xcb_map_request_event_t* ev = (xcb_map_request_event_t*)e;
     add_window( ev->window );
-    XMapWindow( display, ev->window );
+    // xcb_map_window( xconn, ev->window );
+    client_manage( ev->window );
     tile();
     update();
 }
 
-void destroynotify( XEvent* e ) {
+void destroynotify( xcb_generic_event_t* e ) {
     printf( "yawn: destroynotify\n" );
 }
 
-void configurenotify( XEvent* e ) {
+void configurenotify( xcb_generic_event_t* e ) {
     printf( "yawn: configurenotify\n" );
 }
 
-void configurerequest( XEvent* e ) {
+void configurerequest( xcb_generic_event_t * e ) {
+    xcb_configure_request_event_t * ev = (xcb_configure_request_event_t*)e;
+
     printf( "yawn: configurerequest\n" );
 
-    XConfigureRequestEvent *ev = &e->xconfigurerequest;
-    XWindowChanges wc;
-    wc.x = ev->x;
-    wc.y = ev->y;
-    wc.width = ev->width;
-    wc.height = ev->height;
-    wc.border_width = ev->border_width;
-    wc.sibling = ev->above;
-    wc.stack_mode = ev->detail;
-    XConfigureWindow( display, ev->window, ev->value_mask, &wc );
+    uint16_t config_win_mask = 0;
+    uint32_t config_win_vals[ 7 ];
+
+    uint16_t masks[ 7 ] = { XCB_CONFIG_WINDOW_X, XCB_CONFIG_WINDOW_Y, XCB_CONFIG_WINDOW_WIDTH, XCB_CONFIG_WINDOW_HEIGHT, XCB_CONFIG_WINDOW_BORDER_WIDTH, XCB_CONFIG_WINDOW_SIBLING, XCB_CONFIG_WINDOW_STACK_MODE };
+
+    uint32_t values[ 7 ] = { ev->x, ev->y, ev->width, ev->height, ev->border_width, ev->sibling, ev->stack_mode };
+
+    unsigned int i;
+    unsigned int count = 0;
+    for ( i = 0; i < 7; ++i ) {
+        uint16_t mask = masks[ i ];
+        if ( ev->value_mask & mask ) {
+            config_win_mask |= mask;
+            config_win_vals[ count++ ] = values[ i ];
+        }
+    }
+
+    // printf( "value mask: %i %i %i %i %i\n", ev->value_mask, ev->x, ev->y, ev->width, ev->height );
+
+    // xcb_configure_window( xconn, ev->window, ev->value_mask, values );
+    xcb_configure_window( xconn, ev->window, config_win_mask, config_win_vals );
+    xcb_flush( xconn );
 }
 
-void add_window( Window w ) {
+void add_window( xcb_window_t w ) {
     client * c;
 
     if ( !( c = (client*)malloc( 1 * sizeof( client ) ) ) ) {
@@ -120,31 +197,99 @@ void add_window( Window w ) {
 
 void tile() {
     if ( current != NULL ) {
-        printf( "yawn: resizing current\n" );
-        XMoveResizeWindow( display, current->win, 0, 0, sw-2, sh-2 );
+        printf( "yawn: resizing current %i %i\n", sw - 2, sh - 2 );
+        uint32_t values[] = { 0, 0, sw - 2, sh - 2 };
+        // uint32_t values[] = { 0, 0, 600, 800 };
+        xcb_configure_window( xconn, current->win, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values );
+        xcb_flush( xconn );
     }
 }
 
 void update() {
     if ( current != NULL ) {
+        /*
         printf( "yawn: raising current\n" );
-        XSetInputFocus( display, current->win, RevertToParent, CurrentTime );
-        XRaiseWindow( display, current->win );
+        const static uint32_t values[] = { XCB_STACK_MODE_ABOVE };
+        // XSetInputFocus( display, current->win, RevertToParent, CurrentTime );
+        xcb_configure_window( xconn, current->win, XCB_CONFIG_WINDOW_STACK_MODE, values );
+        xcb_flush( xconn );
+        */
     }
 }
 
 #define MASTER_SIZE     0.6
 
+int default_screen;
+xcb_query_tree_cookie_t tree_c;
+
+
+xcb_screen_t *screen_of_display (xcb_connection_t *c,
+                                 int               screen)
+{
+  xcb_screen_iterator_t iter;
+
+  iter = xcb_setup_roots_iterator (xcb_get_setup (c));
+  for (; iter.rem; --screen, xcb_screen_next (&iter))
+    if (screen == 0)
+      return iter.data;
+
+  return NULL;
+}
+
+static xcb_visualtype_t *
+a_default_visual(xcb_screen_t *s)
+{
+    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
+    xcb_visualtype_iterator_t visual_iter;
+
+    if(depth_iter.data)
+        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
+            for(visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
+                visual_iter.rem; xcb_visualtype_next (&visual_iter))
+                if(s->root_visual == visual_iter.data->visual_id)
+                    return visual_iter.data;
+
+    return NULL;
+}
+
+static uint8_t
+a_visual_depth(xcb_screen_t *s, xcb_visualid_t vis)
+{
+    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
+    xcb_visualtype_iterator_t visual_iter;
+
+    if(depth_iter.data)
+        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
+            for( visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
+                visual_iter.rem; xcb_visualtype_next (&visual_iter))
+                if(vis == visual_iter.data->visual_id)
+                    return depth_iter.data->depth;
+
+    fprintf( stderr, "yawn:Could not find a visual's depth\n" );
+    return 0;
+}
+
 void setup() {
+    printf( "yawn: setup\n" );
+
     // Install a signal
     sigchld( 0 );
 
-    screen = DefaultScreen( display );
-    root = RootWindow( display, screen );
+    xconn = xcb_connect( NULL, &default_screen );
+    screen = screen_of_display( xconn, default_screen );
 
-    // Screen width and height
-    sw = XDisplayWidth( display, screen );
-    sh = XDisplayHeight( display, screen );
+    sh = screen->height_in_pixels;
+    sw = screen->width_in_pixels;
+    
+    visual = a_default_visual( screen );
+    default_depth = a_visual_depth( screen, visual->visual_id );
+    
+    // xcb_grab_server( xconn );
+
+    /* Get the window tree associated to this screen */
+    // tree_c = xcb_query_tree_unchecked( xconn, screen->root );
+    
+    // xcb_ungrab_server( xconn );
 
     // For exiting
     bool_quit = 0;
@@ -154,30 +299,36 @@ void setup() {
     current = NULL;
     mode = 0;
     master_size = sw * MASTER_SIZE;
+    
+    xcb_change_window_attributes( xconn, screen->root, XCB_CW_EVENT_MASK, (const uint32_t []) { XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY } );
 
-    XSelectInput( display, root, SubstructureNotifyMask | SubstructureRedirectMask );
+    xcb_flush( xconn );
 }
 
 void start() {
-    XEvent ev;
-
-    // main loop, just dispatch events
-    while ( !bool_quit && !XNextEvent( display, &ev ) ) {
-        if ( events[ ev.type ] ) {
-            events[ ev.type ]( &ev );
+    printf( "yawn: start\n" );
+    xcb_generic_event_t* event;
+    while( ( event = xcb_wait_for_event( xconn ) ) != NULL ) {
+        uint32_t type = event->response_type & ~0x80;
+        printf( "yawn: event %i\n", type );
+        if ( events[ type ] != NULL ) {
+            events[ type ]( event );
         }
+        free( event );
+        xcb_flush( xconn );
     }
 }
 
-int main( int argc, char** argv ) {
-    if ( !( display = XOpenDisplay( NULL ) ) ) {
-        die( "Cannot open display!" );
-    }
+void teardown() {
+    printf( "yawn: tear down\n" );
+    xcb_flush( xconn );
+    xcb_disconnect( xconn );
+}
 
+int main( int argc, char** argv ) {
     setup();
     start();
-
-    XCloseDisplay( display );
+    teardown();
 
     return 0;
 }
