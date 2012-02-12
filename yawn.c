@@ -1,8 +1,5 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <X11/Xlib.h>
-#include <X11/keysym.h>
-#include <X11/XF86keysym.h>
 #include <xcb/xcb.h>
 #include <xcb/xcb_atom.h>
 #include <xcb/xcb_icccm.h>
@@ -13,14 +10,6 @@
 #include <signal.h>
 #include <sys/wait.h>
 
-xcb_connection_t * xconn;
-xcb_screen_t * screen;
-client* head;
-client* current;
-uint32_t sh;
-uint32_t sw;
-uint8_t default_depth = 64;
-
 typedef struct client {
     // Prev and next client
     struct client *next;
@@ -29,6 +18,14 @@ typedef struct client {
     // The window
     xcb_window_t win;
 } client;
+
+xcb_connection_t * xconn;
+xcb_screen_t * screen;
+client* head;
+client* current;
+uint32_t sh;
+uint32_t sw;
+uint8_t default_depth = 64;
 
 void die( const char* e );
 void sigchld( int unused );
