@@ -15,6 +15,11 @@
 
 xcb_connection_t * xconn;
 xcb_screen_t * screen;
+client* head;
+client* current;
+uint32_t sh;
+uint32_t sw;
+uint8_t default_depth = 64;
 
 typedef struct client {
     // Prev and next client
@@ -24,18 +29,6 @@ typedef struct client {
     // The window
     xcb_window_t win;
 } client;
-
-// desktop
-int master_size;
-int mode;
-client* head;
-client* current;
-
-uint32_t sh;
-uint32_t sw;
-uint8_t default_depth;
-xcb_visualtype_t * visual;
-int bool_quit;
 
 void die( const char* e );
 void sigchld( int unused );
@@ -87,13 +80,13 @@ client_manage(xcb_window_t w )
     xcb_get_geometry_reply_t * wgeom = xcb_get_geometry_reply(xconn, geom_c, NULL);
     const uint32_t select_input_val[] = { CLIENT_SELECT_INPUT_EVENT_MASK };
 
-    /* Make sure the window is automatically mapped if awesome exits or dies. */
-    xcb_change_save_set( xconn, XCB_SET_MODE_INSERT, w);
+    /* Make sure the window is automatically mapped on exit. */
+    xcb_change_save_set( xconn, XCB_SET_MODE_INSERT, w );
 
     uint32_t frameid = xcb_generate_id( xconn );
     xcb_create_window( xconn, default_depth, frameid, screen->root,
                       wgeom->x, wgeom->y, wgeom->width, wgeom->height,
-                      wgeom->border_width, XCB_COPY_FROM_PARENT, visual->visual_id,
+                      wgeom->border_width, XCB_COPY_FROM_PARENT, screen->root_visual,
                       XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_BIT_GRAVITY
                       | XCB_CW_WIN_GRAVITY | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK
                       | XCB_CW_COLORMAP,
@@ -108,13 +101,13 @@ client_manage(xcb_window_t w )
                           screen->default_colormap
                       });
 
-    xcb_reparent_window( xconn, w, frameid, 0, 0);
-    xcb_map_window( xconn, w);
-    xcb_map_window( xconn, frameid);
+    xcb_reparent_window( xconn, w, frameid, 0,  0);
+    xcb_map_window( xconn, w );
+    xcb_map_window( xconn, frameid );
 
     /* Do this now so that we don't get any events for the above
      * (Else, reparent could cause an UnmapNotify) */
-    xcb_change_window_attributes(xconn, w, XCB_CW_EVENT_MASK, select_input_val);
+    xcb_change_window_attributes( xconn, w, XCB_CW_EVENT_MASK, select_input_val );
 
     /* The frame window gets the border, not the real client window */
     xcb_configure_window( xconn, w,
@@ -137,7 +130,6 @@ void maprequest( xcb_generic_event_t* e ) {
 
     xcb_map_request_event_t* ev = (xcb_map_request_event_t*)e;
     add_window( ev->window );
-    // xcb_map_window( xconn, ev->window );
     client_manage( ev->window );
     tile();
     update();
@@ -207,17 +199,14 @@ void tile() {
 
 void update() {
     if ( current != NULL ) {
-        /*
         printf( "yawn: raising current\n" );
         const static uint32_t values[] = { XCB_STACK_MODE_ABOVE };
         // XSetInputFocus( display, current->win, RevertToParent, CurrentTime );
         xcb_configure_window( xconn, current->win, XCB_CONFIG_WINDOW_STACK_MODE, values );
         xcb_flush( xconn );
-        */
     }
 }
 
-#define MASTER_SIZE     0.6
 
 int default_screen;
 xcb_query_tree_cookie_t tree_c;
@@ -236,39 +225,6 @@ xcb_screen_t *screen_of_display (xcb_connection_t *c,
   return NULL;
 }
 
-static xcb_visualtype_t *
-a_default_visual(xcb_screen_t *s)
-{
-    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
-    xcb_visualtype_iterator_t visual_iter;
-
-    if(depth_iter.data)
-        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
-            for(visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
-                visual_iter.rem; xcb_visualtype_next (&visual_iter))
-                if(s->root_visual == visual_iter.data->visual_id)
-                    return visual_iter.data;
-
-    return NULL;
-}
-
-static uint8_t
-a_visual_depth(xcb_screen_t *s, xcb_visualid_t vis)
-{
-    xcb_depth_iterator_t depth_iter = xcb_screen_allowed_depths_iterator(s);
-    xcb_visualtype_iterator_t visual_iter;
-
-    if(depth_iter.data)
-        for(; depth_iter.rem; xcb_depth_next (&depth_iter))
-            for( visual_iter = xcb_depth_visuals_iterator(depth_iter.data);
-                visual_iter.rem; xcb_visualtype_next (&visual_iter))
-                if(vis == visual_iter.data->visual_id)
-                    return depth_iter.data->depth;
-
-    fprintf( stderr, "yawn:Could not find a visual's depth\n" );
-    return 0;
-}
-
 void setup() {
     printf( "yawn: setup\n" );
 
@@ -281,24 +237,9 @@ void setup() {
     sh = screen->height_in_pixels;
     sw = screen->width_in_pixels;
     
-    visual = a_default_visual( screen );
-    default_depth = a_visual_depth( screen, visual->visual_id );
-    
-    // xcb_grab_server( xconn );
-
-    /* Get the window tree associated to this screen */
-    // tree_c = xcb_query_tree_unchecked( xconn, screen->root );
-    
-    // xcb_ungrab_server( xconn );
-
-    // For exiting
-    bool_quit = 0;
-
     // List of client
     head = NULL;
     current = NULL;
-    mode = 0;
-    master_size = sw * MASTER_SIZE;
     
     xcb_change_window_attributes( xconn, screen->root, XCB_CW_EVENT_MASK, (const uint32_t []) { XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY } );
 
