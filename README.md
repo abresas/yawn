@@ -27,7 +27,7 @@ Installation
     $ make
     $ sudo make install
 
-Then edit the file that determines which executes your existing window manager (usually ~/.xinitrc) and set it to
+Then edit the file that executes your existing window manager (usually ~/.xinitrc) and set it to execute yawn instead:
 
     exec /usr/bin/yawn
 
