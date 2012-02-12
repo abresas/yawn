@@ -124,28 +124,56 @@ void configurerequest( xcb_generic_event_t * e ) {
 }
 
 void add_window( xcb_window_t w ) {
-    client * c;
+    client * c, * tail;
 
     if ( !( c = (client*)malloc( 1 * sizeof( client ) ) ) ) {
         die( "yawn: Malloc error on add_window" );
     }
 
-    c->next = NULL;
-    c->prev = NULL;
-    c->win = w;
-    head = c;
+    if ( head == NULL ) {
+        c->next = NULL;
+        c->prev = NULL;
+        c->win = w;
+        head = c;
+    }
+    else {
+        for ( tail = head; tail->next; tail = tail->next );
+
+        c->next = NULL;
+        c->prev = tail;
+        c->win = w;
+
+        tail->next = c;
+    }
 
     current = c;
 }
 
 void tile() {
-    if ( current != NULL ) {
-        printf( "yawn: resizing current %i %i\n", sw - 2, sh - 2 );
-        uint32_t values[] = { 0, 0, sw - 2, sh - 2 };
-        // uint32_t values[] = { 0, 0, 600, 800 };
-        xcb_configure_window( xconn, current->win, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values );
-        xcb_flush( xconn );
+    int n = 0, x = 0, y = 0;
+    client* c;
+
+    if ( current == NULL ) {
+        return; // nothing to do here
     }
+    
+    for ( c = head; c; c = c->next ) {
+        ++n;
+    }
+
+    printf( "size %i %i %i\n", n, sw, sh );
+    int w = sw / n;
+    int h = sh - 2;
+
+    for ( c = head; c; c = c->next) {
+        // XMoveResizeWindow(dis,c->win,master_size,y,sw-master_size-2,(sh/n)-2);
+        printf( "yawn: resizing current %i %i %i %i\n", x, y, w, h );
+        uint32_t values[] = { x, y, w, h };
+        // uint32_t values[] = { 0, 0, 600, 800 };
+        xcb_configure_window( xconn, c->win, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values );
+        x += sw / n;
+    }
+    xcb_flush( xconn );
 }
 
 void update() {

@@ -19,7 +19,7 @@ Goals
 Status
 ------
 
-Basic code for window management with XCB is done. You can see one window at a time, fullscreen, and there are no shortcuts implemented.
+Basic code for window management with XCB is done. Windows are always tiled horizontally, getting full height and equal width. No shortcuts implemented.
 
 Installation
 ------------
