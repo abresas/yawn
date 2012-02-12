@@ -29,7 +29,7 @@ Installation
 
 Then edit the file that determines which executes your existing window manager (usually ~/.xinitrc) and set it to
 
-    $ exec /usr/bin/yawn
+    exec /usr/bin/yawn
 
 
 Test run
@@ -42,4 +42,5 @@ You can have two X displays open simultaneously, one managed by your regular win
 which will open a display with id :2.
 
 To open a window on that display from within another display, you usually just pass --display=:2, or else you can set the environmental variable DISPLAY
+
     $ export DISPLAY=:2
