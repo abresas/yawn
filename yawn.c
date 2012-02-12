@@ -32,6 +32,7 @@ void sigchld( int unused );
 void setup();
 void start();
 void add_window( xcb_window_t w );
+void remove_window( xcb_window_t w );
 void tile();
 void update();
 
@@ -88,6 +89,10 @@ void maprequest( xcb_generic_event_t* e ) {
 
 void destroynotify( xcb_generic_event_t* e ) {
     printf( "yawn: destroynotify\n" );
+    xcb_destroy_notify_event_t* ev = (xcb_destroy_notify_event_t*)e;
+    remove_window( ev->window );
+    tile();
+    update();
 }
 
 void configurenotify( xcb_generic_event_t* e ) {
@@ -147,6 +152,39 @@ void add_window( xcb_window_t w ) {
     }
 
     current = c;
+}
+
+void remove_window( xcb_window_t w ) {
+    client *c;
+
+    for(c=head;c;c=c->next) {
+        if(c->win == w) {
+            if(c->prev == NULL && c->next == NULL) {
+                free(head);
+                head = NULL;
+                current = NULL;
+                return;
+            }
+
+            if(c->prev == NULL) {
+                head = c->next;
+                c->next->prev = NULL;
+                current = c->next;
+            }
+            else if(c->next == NULL) {
+                c->prev->next = NULL;
+                current = c->prev;
+            }
+            else {
+                c->prev->next = c->next;
+                c->next->prev = c->prev;
+                current = c->prev;
+            }
+
+            free(c);
+            return;
+        }
+    }
 }
 
 void tile() {
