@@ -25,7 +25,7 @@ client* head;
 client* current;
 uint32_t sh;
 uint32_t sw;
-uint8_t default_depth = 64;
+uint8_t default_depth = 24;
 
 void die( const char* e );
 void sigchld( int unused );
@@ -68,59 +68,13 @@ void keypress( xcb_generic_event_t* e ) {
 }
 
 #define CLIENT_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE )
-#define FRAME_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW | XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT )
 
-void
-client_manage(xcb_window_t w )
-{
-    xcb_get_geometry_cookie_t geom_c = xcb_get_geometry_unchecked( xconn, w );
-    xcb_get_geometry_reply_t * wgeom = xcb_get_geometry_reply(xconn, geom_c, NULL);
+void client_manage( xcb_window_t w ) {
     const uint32_t select_input_val[] = { CLIENT_SELECT_INPUT_EVENT_MASK };
-
-    /* Make sure the window is automatically mapped on exit. */
-    xcb_change_save_set( xconn, XCB_SET_MODE_INSERT, w );
-
-    uint32_t frameid = xcb_generate_id( xconn );
-    xcb_create_window( xconn, default_depth, frameid, screen->root,
-                      wgeom->x, wgeom->y, wgeom->width, wgeom->height,
-                      wgeom->border_width, XCB_COPY_FROM_PARENT, screen->root_visual,
-                      XCB_CW_BACK_PIXEL | XCB_CW_BORDER_PIXEL | XCB_CW_BIT_GRAVITY
-                      | XCB_CW_WIN_GRAVITY | XCB_CW_OVERRIDE_REDIRECT | XCB_CW_EVENT_MASK
-                      | XCB_CW_COLORMAP,
-                      (const uint32_t [])
-                      {
-                          screen->black_pixel,
-                          screen->black_pixel,
-                          XCB_GRAVITY_NORTH_WEST,
-                          XCB_GRAVITY_NORTH_WEST,
-                          1,
-                          FRAME_SELECT_INPUT_EVENT_MASK,
-                          screen->default_colormap
-                      });
-
-    xcb_reparent_window( xconn, w, frameid, 0,  0);
     xcb_map_window( xconn, w );
-    xcb_map_window( xconn, frameid );
-
-    /* Do this now so that we don't get any events for the above
-     * (Else, reparent could cause an UnmapNotify) */
     xcb_change_window_attributes( xconn, w, XCB_CW_EVENT_MASK, select_input_val );
-
-    /* The frame window gets the border, not the real client window */
-    xcb_configure_window( xconn, w,
-                         XCB_CONFIG_WINDOW_BORDER_WIDTH,
-                         (uint32_t[]) { 0 });
-
-    /* Move this window to the bottom of the stack. Without this we would force
-     * other windows which will be above this one to redraw themselves because
-     * this window occludes them for a tiny moment. The next stack_refresh()
-     * will fix this up and move the window to its correct place. */
-
-    xcb_configure_window(xconn, w,
-                         XCB_CONFIG_WINDOW_STACK_MODE,
-                         (uint32_t[]) { XCB_STACK_MODE_ABOVE });
+    xcb_configure_window(xconn, w, XCB_CONFIG_WINDOW_STACK_MODE, (uint32_t[]) { XCB_STACK_MODE_ABOVE } );
 }
-
 
 void maprequest( xcb_generic_event_t* e ) {
     printf( "yawn: maprequest\n" );
@@ -209,17 +163,17 @@ int default_screen;
 xcb_query_tree_cookie_t tree_c;
 
 
-xcb_screen_t *screen_of_display (xcb_connection_t *c,
-                                 int               screen)
-{
-  xcb_screen_iterator_t iter;
+xcb_screen_t *screen_of_display( xcb_connection_t *c, int screen ) {
+    xcb_screen_iterator_t iter;
 
-  iter = xcb_setup_roots_iterator (xcb_get_setup (c));
-  for (; iter.rem; --screen, xcb_screen_next (&iter))
-    if (screen == 0)
-      return iter.data;
+    iter = xcb_setup_roots_iterator (xcb_get_setup (c) );
+    for ( ; iter.rem; --screen, xcb_screen_next (&iter) ) {
+        if ( screen == 0 ) {
+            return iter.data;
+        }
+    }
 
-  return NULL;
+    return NULL;
 }
 
 void setup() {
