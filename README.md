@@ -16,10 +16,12 @@ Goals
 * Customizable shortcuts
 * Minimal and clean code
 
-Status
+Changelog
 ------
 
-Basic code for window management with XCB is done. Windows are always tiled horizontally, getting full height and equal width. No shortcuts implemented.
+Basic code for window management with XCB is done. Windows are always tiled horizontally, getting full height and equal width. 
+
+You can spawn programs with custom shortcuts. Added sample configuration file.
 
 Installation
 ------------

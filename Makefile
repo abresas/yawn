@@ -1,5 +1,5 @@
 CFLAGS+= -Wall
-LDADD+= -lxcb
+LDADD+= -lxcb -lxcb-keysyms
 LDFLAGS=
 EXEC=yawn
 

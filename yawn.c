@@ -1,14 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <xcb/xcb.h>
-#include <xcb/xcb_atom.h>
-#include <xcb/xcb_icccm.h>
 #include <xcb/xcb_keysyms.h>
-#include <xcb/xcb_aux.h>
-#include <xcb/xcb_event.h>
-#include <unistd.h>
-#include <signal.h>
+#include <X11/keysym.h>
 #include <sys/wait.h>
+#include <unistd.h> // execvp
+#include <string.h> // strchr
 
 typedef struct client {
     // Prev and next client
@@ -23,9 +20,11 @@ xcb_connection_t * xconn;
 xcb_screen_t * screen;
 client* head;
 client* current;
+xcb_key_symbols_t* symbols;
 uint32_t sh;
 uint32_t sw;
 uint8_t default_depth = 24;
+int bindingsCount = 1;
 
 void die( const char* e );
 void sigchld( int unused );
@@ -64,11 +63,69 @@ void sigchld( int unused ) {
 	while( 0 < waitpid( -1, NULL, WNOHANG ) );
 }
 
-void keypress( xcb_generic_event_t* e ) {
-    printf( "yawn: keypress\n" );
+int spawn( int argc, char ** argv ) {
+    printf( "spawning %i %s %s\n", argc, argv[ 0 ], argv[ 1 ] );
+    argv[ argc ] = NULL;
+    if ( fork() == 0 ) {
+        execvp( argv[ 0 ], argv + 1 );
+        exit( 0 );
+    }
+    return 0;
 }
 
-#define CLIENT_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE )
+struct callback_t {
+    int (*callback)(int argc, char ** argv);
+    char * name;
+};
+
+struct callback_t callbacks[] = {
+    { spawn, "spawn" }
+};
+
+int modifierAsciiToMask[ 256 ] = {
+    [ 'A' ] = XCB_MOD_MASK_1,
+    [ 'C' ] = XCB_MOD_MASK_CONTROL,
+    [ 'M' ] = XCB_MOD_MASK_4
+};
+
+struct keybinding {
+    uint16_t state;
+    xcb_keysym_t key;
+    int (*callback)(int argc, char ** argv);
+    int argc;
+    char ** argv;
+};
+
+struct keybinding keybindings[ 100 ];
+
+void keypress( xcb_generic_event_t* e ) {
+    xcb_key_press_event_t * ev = (xcb_key_press_event_t*)e;
+    xcb_keysym_t keysym = xcb_key_symbols_get_keysym( symbols, ev->detail, 0 );
+    printf( "yawn: keypress %i %i %i\n", ev->detail, keysym, ev->state );
+    int i = 0;
+    printf( "keybinding count: %i\n", bindingsCount );
+    for ( i = 0; i < bindingsCount; ++i ) {
+        struct keybinding k = keybindings[ i ];
+        printf( "key sym: %i state: %i\n", k.key, k.state );
+        if ( k.key == keysym && ev->state & k.state ) {
+            printf( "found key binding! calling callback! %i %s\n", k.argc, k.argv[ 0 ] );
+            k.callback( k.argc, k.argv );
+        }
+    }
+}
+
+xcb_keysym_t get_keysym_from_key( char * key ) {
+    printf( "get keysym for: %s\n", key );
+    if ( strlen( key ) == 1 ) {
+        return key[ 0 ];
+    }
+    if ( strcmp( key, "return" ) == 0 ) {
+        return XK_Return;
+    }
+    return 0;
+}
+
+#define CLIENT_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_KEY_PRESS )
 
 void client_manage( xcb_window_t w ) {
     const uint32_t select_input_val[] = { CLIENT_SELECT_INPUT_EVENT_MASK };
@@ -121,9 +178,6 @@ void configurerequest( xcb_generic_event_t * e ) {
         }
     }
 
-    // printf( "value mask: %i %i %i %i %i\n", ev->value_mask, ev->x, ev->y, ev->width, ev->height );
-
-    // xcb_configure_window( xconn, ev->window, ev->value_mask, values );
     xcb_configure_window( xconn, ev->window, config_win_mask, config_win_vals );
     xcb_flush( xconn );
 }
@@ -204,10 +258,8 @@ void tile() {
     int h = sh - 2;
 
     for ( c = head; c; c = c->next) {
-        // XMoveResizeWindow(dis,c->win,master_size,y,sw-master_size-2,(sh/n)-2);
         printf( "yawn: resizing current %i %i %i %i\n", x, y, w, h );
         uint32_t values[] = { x, y, w, h };
-        // uint32_t values[] = { 0, 0, 600, 800 };
         xcb_configure_window( xconn, c->win, XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y | XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values );
         x += sw / n;
     }
@@ -218,16 +270,14 @@ void update() {
     if ( current != NULL ) {
         printf( "yawn: raising current\n" );
         const static uint32_t values[] = { XCB_STACK_MODE_ABOVE };
-        // XSetInputFocus( display, current->win, RevertToParent, CurrentTime );
+        // TODO: set input focus?
         xcb_configure_window( xconn, current->win, XCB_CONFIG_WINDOW_STACK_MODE, values );
         xcb_flush( xconn );
     }
 }
 
-
 int default_screen;
 xcb_query_tree_cookie_t tree_c;
-
 
 xcb_screen_t *screen_of_display( xcb_connection_t *c, int screen ) {
     xcb_screen_iterator_t iter;
@@ -251,14 +301,15 @@ void setup() {
     xconn = xcb_connect( NULL, &default_screen );
     screen = screen_of_display( xconn, default_screen );
 
+    symbols = xcb_key_symbols_alloc( xconn );
+
     sh = screen->height_in_pixels;
     sw = screen->width_in_pixels;
     
-    // List of client
     head = NULL;
     current = NULL;
     
-    xcb_change_window_attributes( xconn, screen->root, XCB_CW_EVENT_MASK, (const uint32_t []) { XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY } );
+    xcb_change_window_attributes( xconn, screen->root, XCB_CW_EVENT_MASK, (const uint32_t []) { XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY | XCB_EVENT_MASK_KEY_PRESS } );
 
     xcb_flush( xconn );
 }
@@ -283,8 +334,121 @@ void teardown() {
     xcb_disconnect( xconn );
 }
 
+typedef enum {
+    false,
+    true
+} bool;
+
+uint16_t get_state_from_combination( char ** key_combination_pointer ) {
+    int i;
+    uint16_t state = 0;
+
+    char * keyCombination = *key_combination_pointer;
+
+    for ( i = 0; i < strlen( keyCombination ); i += 2 ) {
+        if ( keyCombination[ i + 1 ] != '-' ) {
+            break;
+        }
+        state |= modifierAsciiToMask[ (int)keyCombination[ i ] ];
+    }
+
+    if ( i == 0 ) {
+        state = XCB_MOD_MASK_ANY;
+    }
+
+    *key_combination_pointer = keyCombination + i;
+
+    return state;
+}
+
+int bind( int argCount, char ** );
+
+int (*get_callback(char * name ))(int , char **) {
+    printf( "returning callback for %s\n", name );
+    if ( !strcmp( name, "bind" ) ) {
+        return &bind;
+    }
+    else {
+        return &spawn;
+    }
+}
+
+void str_array_ncopy( char ** to, char ** from, int n ) {
+    int i;
+    for ( i = 0; i < n; ++i ) {
+        to[ i ] = (char*)malloc( strlen( from[ i ] ) * sizeof( char ) );
+        strcpy( to[ i ], from[ i ] );
+    }
+}
+
+int bind( int argCount, char ** words ) {
+    int argc = argCount - 2;
+
+    char * keyCombination = words[ 0 ],
+         * command = words[ 1 ],
+         ** argv = ( char** )malloc( argc * sizeof( char * ) );
+
+    str_array_ncopy( argv, words + 2, argc );
+
+    struct keybinding k = {
+        get_state_from_combination( &keyCombination ),
+        get_keysym_from_key( keyCombination ),
+        get_callback( command ),
+        argc,
+        argv
+    };
+
+    keybindings[ bindingsCount++ ] = k;
+
+    return 0;
+}
+
+int freadline( FILE * fp, char * line ) {
+    int i = 0;
+    while ( ( line[ i++ ] = fgetc( fp ) ) != EOF ) {
+        if ( line[ i - 1 ] == '\n' ) {
+            line[ i - 1 ] = '\0';
+            return 0;
+        }
+    }
+    return EOF;
+}
+
+int str_split( char * s, char * delims, char ** parts ) {
+    int count = 0;
+    char * result = strtok( s, delims );
+    do {
+        parts[ count++ ] = (char*)malloc( strlen( result ) * sizeof( char ) );
+        strcpy( parts[ count - 1 ], result );
+    } while ( ( result = strtok( NULL, " " ) ) != NULL );
+    return count; 
+}
+
+void read_configuration( char * filename ) {
+    int argc, (*callback)( int, char ** );
+    char line[ 256 ], section[ 256 ], * argv[ 128 ];
+    FILE * fp = fopen( "yawn.conf", "r" );
+
+    while ( freadline( fp, line ) != EOF ) {
+        int length = strlen( line );
+        if ( !length || line[ 0 ] == '#' ) {
+            continue;
+        }
+        if ( line[ 0 ] == '[' && line[ length - 1 ] == ']' ) {
+            line[ length - 1 ] = '\0';
+            strcpy( section, line + 1 );
+            continue;
+        }
+        argc = str_split( line, " ", argv );
+        callback = get_callback( section );
+        callback( argc, argv );
+    }
+}
+
 int main( int argc, char** argv ) {
     setup();
+    read_configuration( "yawn.conf" );
+
     start();
     teardown();
 
