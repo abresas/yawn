@@ -6,7 +6,8 @@ EXEC=yawn
 PREFIX?= /usr
 BINDIR?= $(PREFIX)/bin
 
-CC=gcc
+# CC=gcc
+CC=clang
 
 all: $(EXEC)
 
