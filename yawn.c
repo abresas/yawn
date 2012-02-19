@@ -289,6 +289,22 @@ void add_window( xcb_window_t w ) {
     current = c;
 }
 
+int kill_client( int argc, char ** argv ) {
+    xcb_destroy_window( xconn, current->win );
+
+    /* Remove this window from the save set since this shouldn't be made visible
+     * after a restart anymore. */
+    xcb_change_save_set( xconn, XCB_SET_MODE_DELETE, current->win );
+
+    /* Do this last to avoid races with clients. According to ICCCM, clients
+     * arent allowed to re-use the window until after this. */
+    // xwindow_set_state(c->window, XCB_ICCCM_WM_STATE_WITHDRAWN);
+
+    current->win = XCB_NONE;
+    
+    return 0;
+}
+
 void remove_window( xcb_window_t w ) {
     client *c;
 
@@ -463,6 +479,9 @@ int (*get_callback(char * name ))(int , char **) {
     }
     else if ( !strcmp( name, "quit" ) ) {
         return &quit;
+    }
+    else if ( !strcmp( name, "kill_client" ) ) {
+        return &kill_client;
     }
     else {
         return &spawn;
