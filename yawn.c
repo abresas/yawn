@@ -417,7 +417,8 @@ void setup() {
         desktops[ i ].current = current;
     }
 
-    current_desktop = 0;
+    char * argv[] = { "0" };
+    change_desktop( 1, argv );
 }
 
 void start() {
