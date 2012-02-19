@@ -25,6 +25,9 @@ Basic code for window management with XCB is done. Windows are always tiled hori
 v0.1.1
 You can spawn programs with custom shortcuts. Added sample configuration file.
 
+v0.1.2
+Desktops for grouping windows.
+
 Installation
 ------------
 

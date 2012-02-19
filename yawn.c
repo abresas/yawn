@@ -8,13 +8,16 @@
 #include <string.h> // strchr
 
 typedef struct client {
-    // Prev and next client
     struct client *next;
     struct client *prev;
-
-    // The window
     xcb_window_t win;
 } client;
+
+typedef struct desktop desktop;
+struct desktop{
+    client *head;
+    client *current;
+};
 
 xcb_connection_t * xconn;
 xcb_screen_t * screen;
@@ -35,7 +38,6 @@ void remove_window( xcb_window_t w );
 void tile();
 void update();
 
-// xcb_generic_event_t handlers
 void keypress( xcb_generic_event_t *e );
 void maprequest( xcb_generic_event_t *e );
 void destroynotify( xcb_generic_event_t *e );
@@ -50,9 +52,61 @@ void (*events[256])( xcb_generic_event_t * ) = {
     [XCB_MAP_REQUEST] = maprequest
 };
 
+static int current_desktop;
+static desktop desktops[10];
+
+void save_desktop( int i );
+void select_desktop( int i );
+
+int change_desktop( int argc, char ** argv ) {
+    int i;
+    client *c;
+
+    sscanf( argv[ 0 ], "%s", &i );
+
+    if ( i == current_desktop ) {
+        return 0;
+    }
+
+    if ( head != NULL ) {
+        for( c = head; c; c= c->next ) {
+            xcb_unmap_window( xconn, c->win );
+        }
+    }
+
+    save_desktop( current_desktop );
+    select_desktop( i );
+
+    if ( head != NULL ) {
+        for( c = head; c; c = c->next ) {
+            xcb_map_window( xconn, c->win );
+        }
+    }
+
+    tile();
+    update();
+
+    return 0;
+}
+
+void save_desktop( int i ) {
+    desktops[ i ].head = head;
+    desktops[ i ].current = current;
+}
+
+void select_desktop( int i ) {
+    head = desktops[ i ].head;
+    current = desktops[ i ].current;
+    current_desktop = i;
+}
+
 void die( const char* e ) {
     fprintf( stderr, "yawn: %s\n", e );
     exit( 1 );
+}
+
+int quit( int argc, char ** argv ) {
+    exit( 0 );
 }
 
 void sigchld( int unused ) {
@@ -125,6 +179,30 @@ xcb_keysym_t get_keysym_from_key( char * key ) {
     return 0;
 }
 
+static void window_grabkey( xcb_window_t win, struct keybinding kb ) {
+    if ( !kb.key ) {
+        printf( "keycodes for %i\n", kb.key );
+        return; // TODO: temporary fix
+    }
+    xcb_keycode_t * keycodes = xcb_key_symbols_get_keycode( symbols, kb.key );
+    if ( keycodes ) {
+        for( xcb_keycode_t *kc = keycodes; *kc; kc++ ) {
+            printf( "grabbing key: %i %i\n", *kc, kb.state );
+            xcb_grab_key( xconn, 1, win, kb.state, *kc, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+        }
+        // p_delete(&keycodes);
+    }
+}
+
+void window_grabkeys(xcb_window_t win, struct keybinding * keybindings ) {
+    xcb_ungrab_key( xconn, XCB_GRAB_ANY, win, XCB_BUTTON_MASK_ANY);
+
+    for ( int i = 0; i < bindingsCount; ++i ) {
+        struct keybinding kb = keybindings[ i ];
+        window_grabkey( win, kb );
+    }
+}
+
 #define CLIENT_SELECT_INPUT_EVENT_MASK ( XCB_EVENT_MASK_STRUCTURE_NOTIFY | XCB_EVENT_MASK_PROPERTY_CHANGE | XCB_EVENT_MASK_FOCUS_CHANGE | XCB_EVENT_MASK_KEY_PRESS )
 
 void client_manage( xcb_window_t w ) {
@@ -132,7 +210,9 @@ void client_manage( xcb_window_t w ) {
     xcb_map_window( xconn, w );
     xcb_change_window_attributes( xconn, w, XCB_CW_EVENT_MASK, select_input_val );
     xcb_configure_window(xconn, w, XCB_CONFIG_WINDOW_STACK_MODE, (uint32_t[]) { XCB_STACK_MODE_ABOVE } );
+    window_grabkeys( w, keybindings );
 }
+
 
 void maprequest( xcb_generic_event_t* e ) {
     printf( "yawn: maprequest\n" );
@@ -308,10 +388,19 @@ void setup() {
     
     head = NULL;
     current = NULL;
-    
+   
     xcb_change_window_attributes( xconn, screen->root, XCB_CW_EVENT_MASK, (const uint32_t []) { XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY | XCB_EVENT_MASK_KEY_PRESS } );
 
     xcb_flush( xconn );
+
+    // Set up all desktop
+    int i;
+    for ( i = 0; i < 10; ++i ) {
+        desktops[ i ].head = head;
+        desktops[ i ].current = current;
+    }
+
+    current_desktop = 0;
 }
 
 void start() {
@@ -367,6 +456,12 @@ int (*get_callback(char * name ))(int , char **) {
     printf( "returning callback for %s\n", name );
     if ( !strcmp( name, "bind" ) ) {
         return &bind;
+    }
+    else if ( !strcmp( name, "change_desktop" ) ) {
+        return &change_desktop;
+    }
+    else if ( !strcmp( name, "quit" ) ) {
+        return &quit;
     }
     else {
         return &spawn;
