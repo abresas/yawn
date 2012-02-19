@@ -19,8 +19,10 @@ Goals
 Changelog
 ------
 
+v0.1.0
 Basic code for window management with XCB is done. Windows are always tiled horizontally, getting full height and equal width. 
 
+v0.1.1
 You can spawn programs with custom shortcuts. Added sample configuration file.
 
 Installation
