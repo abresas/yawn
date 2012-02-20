@@ -22,6 +22,7 @@ struct desktop{
 
 xcb_connection_t * xconn;
 xcb_screen_t * screen;
+xcb_timestamp_t timestamp;
 client* head;
 client* current;
 xcb_key_symbols_t* symbols;
@@ -44,13 +45,15 @@ void maprequest( xcb_generic_event_t *e );
 void destroynotify( xcb_generic_event_t *e );
 void configurenotify( xcb_generic_event_t *e );
 void configurerequest( xcb_generic_event_t *e );
+void enternotify( xcb_generic_event_t *e );
 
 void (*events[256])( xcb_generic_event_t * ) = {
     [XCB_KEY_PRESS] = keypress,
     [XCB_CONFIGURE_REQUEST] = configurerequest,
     [XCB_DESTROY_NOTIFY] = destroynotify,
     [XCB_CONFIGURE_NOTIFY] = configurenotify,
-    [XCB_MAP_REQUEST] = maprequest
+    [XCB_MAP_REQUEST] = maprequest,
+    [XCB_ENTER_NOTIFY] = enternotify
 };
 
 static int current_desktop;
@@ -155,6 +158,7 @@ struct keybinding keybindings[ 100 ];
 
 void keypress( xcb_generic_event_t* e ) {
     xcb_key_press_event_t * ev = (xcb_key_press_event_t*)e;
+    timestamp = ev->time;
     xcb_keysym_t keysym = xcb_key_symbols_get_keysym( symbols, ev->detail, 0 );
     printf( "yawn: keypress %i %i %i\n", ev->detail, keysym, ev->state );
     int i = 0;
@@ -167,6 +171,12 @@ void keypress( xcb_generic_event_t* e ) {
             k.callback( k.argc, k.argv );
         }
     }
+}
+
+void enternotify( xcb_generic_event_t * e ) {
+    printf( "yawn: enternotify\n" );
+    xcb_enter_notify_event_t * ev = (xcb_enter_notify_event_t*)e;
+    timestamp = ev->time;
 }
 
 xcb_keysym_t get_keysym_from_key( char * key ) {
@@ -223,6 +233,16 @@ void maprequest( xcb_generic_event_t* e ) {
     client_manage( ev->window );
     tile();
     update();
+}
+
+client * get_client_by_window( xcb_window_t w ) {
+    client * c;
+    for ( c = head; c; c = c->next ) {
+        if ( c->win == w ) {
+            return c;
+        }
+    }
+    return NULL;
 }
 
 void destroynotify( xcb_generic_event_t* e ) {
@@ -367,7 +387,7 @@ void update() {
     if ( current != NULL ) {
         printf( "yawn: raising current\n" );
         const static uint32_t values[] = { XCB_STACK_MODE_ABOVE };
-        // TODO: set input focus?
+        xcb_set_input_focus( xconn, XCB_INPUT_FOCUS_PARENT, current->win, timestamp );
         xcb_configure_window( xconn, current->win, XCB_CONFIG_WINDOW_STACK_MODE, values );
         xcb_flush( xconn );
     }
