@@ -7,7 +7,7 @@ void stack_add( xcb_window_t w ) {
     struct client_t *c, *tail;
 
     if ( !( c = (struct client_t*)malloc( 1 * sizeof (struct client_t) ) ) ) {
-        die( "yawn: Malloc error on add_window" );
+        die( "yawn: Malloc error on stack_add" );
     }
 
     if ( head == NULL ) {
@@ -30,36 +30,35 @@ void stack_add( xcb_window_t w ) {
 }
 
 void stack_remove( xcb_window_t w ) {
-    struct client_t *c;
-
-    for(c=head;c;c=c->next) {
-        if(c->win == w) {
-            if(c->prev == NULL && c->next == NULL) {
-                free(head);
-                head = NULL;
-                current = NULL;
-                return;
-            }
-
-            if(c->prev == NULL) {
-                head = c->next;
-                c->next->prev = NULL;
-                current = c->next;
-            }
-            else if(c->next == NULL) {
-                c->prev->next = NULL;
-                current = c->prev;
-            }
-            else {
-                c->prev->next = c->next;
-                c->next->prev = c->prev;
-                current = c->prev;
-            }
-
-            free(c);
-            return;
-        }
+    struct client_t * c = stack_get_client( w );
+    if ( !c ) {
+        return;
     }
+
+    if(c->prev == NULL && c->next == NULL) {
+        free(head);
+        head = NULL;
+        current = NULL;
+        return;
+    }
+
+    if(c->prev == NULL) {
+        head = c->next;
+        c->next->prev = NULL;
+        current = c->next;
+    }
+    else if(c->next == NULL) {
+        c->prev->next = NULL;
+        current = c->prev;
+    }
+    else {
+        c->prev->next = c->next;
+        c->next->prev = c->prev;
+        current = c->prev;
+    }
+
+    free( c );
+    return;
 }
 
 void stack_tile() {
@@ -85,4 +84,14 @@ void stack_tile() {
         x += sw / n;
     }
     xcb_flush( xconn );
+}
+
+struct client_t * stack_get_client( xcb_window_t w ) {
+    struct client_t * c;
+    for ( c = head; c; c = c->next ) {
+        if ( c->win == w ) {
+            return c;
+        }
+    }
+    return NULL;
 }

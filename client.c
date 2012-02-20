@@ -11,16 +11,6 @@ void client_manage( xcb_window_t w ) {
     window_grabkeys( w, keybindings );
 }
 
-struct client_t * client_get_by_window( xcb_window_t w ) {
-    struct client_t * c;
-    for ( c = head; c; c = c->next ) {
-        if ( c->win == w ) {
-            return c;
-        }
-    }
-    return NULL;
-}
-
 int client_kill( int argc, char ** argv ) {
     xcb_destroy_window( xconn, current->win );
 

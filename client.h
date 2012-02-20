@@ -12,7 +12,6 @@ struct client_t {
 };
 
 void client_manage( xcb_window_t w );
-struct client_t *client_get_by_window( xcb_window_t w );
 int client_kill( int argc, char ** argv );
 
 #endif
