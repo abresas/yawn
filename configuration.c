@@ -49,9 +49,12 @@ char * xdg_config_path( char * filename, int directory_type ) {
 }
 
 void configuration_read( char * filename ) {
-    int argc, (*callback)( int, char ** );
-    char line[ 256 ], section[ 256 ], * argv[ 128 ];
-    FILE * fp = fopen( xdg_config_path( "yawn.conf", CONFIG_DIR_HOME ), "r" );
+    int i, argc, (*callback)( int, char ** );
+    char line[ 256 ], section[ 256 ], * argv[ 128 ], *config_path; 
+
+    config_path = xdg_config_path( "yawn.conf", CONFIG_DIR_HOME );
+    FILE * fp = fopen( config_path, "r" );
+    free( config_path );
 
     while ( freadline( fp, line ) != EOF ) {
         int length = strlen( line );
@@ -66,5 +69,10 @@ void configuration_read( char * filename ) {
         argc = string_split( line, " ", argv );
         callback = get_action( section );
         callback( argc, argv );
+        for ( i = 0; i < argc; ++i ) {
+            free( argv[ i ] );
+        }
     }
+
+    fclose( fp );
 }
